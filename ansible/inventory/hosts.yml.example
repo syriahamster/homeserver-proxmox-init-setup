@@ -1,0 +1,10 @@
+all:
+  children:
+    proxmox:
+      hosts:
+        proxmox-server:
+          ansible_host: 192.168.0.100           # 실제 ProxMox 서버 IP로 변경
+          ansible_user: root
+          ansible_ssh_pass: "your-password-here" # 실제 root 패스워드로 변경
+          ansible_port: 22
+          ansible_python_interpreter: /usr/bin/python3

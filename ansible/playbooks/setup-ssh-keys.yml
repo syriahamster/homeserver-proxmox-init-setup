@@ -1,0 +1,216 @@
+---
+- name: "ProxMox SSH 키 기반 인증 설정 (검증 포함)"
+  hosts: proxmox
+  gather_facts: yes
+  vars:
+    # SSH 보안 설정
+    ssh_max_auth_tries: 3
+    ssh_client_alive_interval: 300
+    ssh_client_alive_count_max: 2
+
+  tasks:
+    - name: "=== 1단계: 설정 전 인증 방법 테스트 ==="
+      debug:
+        msg: |
+          ================================
+          SSH 키 배포 전 인증 방법 테스트
+          ================================
+    
+    - name: "현재 연결 방식 확인"
+      debug:
+        msg: |
+          현재 Ansible 설정:
+          - ansible_ssh_pass 정의됨: {{ 'Yes' if ansible_ssh_pass is defined else 'No' }}
+          - SSH 키 파일 정의됨: {{ 'Yes' if ansible_ssh_private_key_file is defined else 'No' }}
+    
+    - name: "설정 전 SSH 키 인증 테스트"
+      command: ssh -o PreferredAuthentications=publickey -o ConnectTimeout=5 -o PasswordAuthentication=no -o BatchMode=yes {{ ansible_user }}@{{ ansible_host }} echo "SSH_KEY_TEST"
+      delegate_to: localhost
+      register: pre_ssh_key_test
+      failed_when: false
+      changed_when: false
+
+    - name: "설정 전 인증 방법 분석"
+      debug:
+        msg: |
+          현재 인증 상태 분석:
+          ================================
+          ✅ SSH 키 인증: {{ 'SUCCESS' if pre_ssh_key_test.rc == 0 else 'FAILED' }}
+          📋 패스워드 설정: {{ '있음 (ansible_ssh_pass 정의됨)' if ansible_ssh_pass is defined else '없음' }}
+          
+          💡 실제 연결 방식: {{ 'SSH 키가 우선 사용됨' if pre_ssh_key_test.rc == 0 else 'SSH 키 없음 - 패스워드 필요' }}
+          {{ '   → SSH 키가 이미 배포되어 작동 중입니다!' if pre_ssh_key_test.rc == 0 else '   → SSH 키를 배포해야 합니다.' }}
+          ================================
+
+    - name: "=== 2단계: SSH 설정 백업 ==="
+      copy:
+        src: /etc/ssh/sshd_config
+        dest: "/etc/ssh/sshd_config.backup.{{ ansible_date_time.epoch }}"
+        remote_src: yes
+        backup: yes
+
+    - name: "=== 3단계: SSH 공개키 배포 ==="
+      debug:
+        msg: |
+          SSH 공개키 배포 단계:
+          {{ '✅ SSH 키가 이미 작동 중이므로 배포를 건너뜁니다.' if pre_ssh_key_test.rc == 0 else '📋 SSH 키를 배포합니다...' }}
+
+    - name: "SSH 공개키 배포 (ed25519)"
+      authorized_key:
+        user: "{{ ansible_user }}"
+        state: present
+        key: "{{ lookup('file', '~/.ssh/id_ed25519.pub') }}"
+        comment: "Ansible managed key - {{ ansible_date_time.iso8601 }}"
+      register: ssh_key_ed25519
+      failed_when: false
+      when: pre_ssh_key_test.rc != 0
+
+    - name: "SSH 공개키 배포 (RSA 백업)"
+      authorized_key:
+        user: "{{ ansible_user }}"
+        state: present
+        key: "{{ lookup('file', '~/.ssh/id_rsa.pub') }}"
+        comment: "Ansible managed RSA key - {{ ansible_date_time.iso8601 }}"
+      when: pre_ssh_key_test.rc != 0 and ssh_key_ed25519.failed | default(false)
+      register: ssh_key_rsa
+      failed_when: false
+
+    - name: "SSH 키 배포 상태 확인"
+      debug:
+        msg: |
+          SSH 키 배포 결과:
+          {{ '✅ 이미 SSH 키 인증이 작동하므로 배포 건너뜀' if pre_ssh_key_test.rc == 0 else '📋 배포 시도 결과:' }}
+          {{ '- ed25519 키: ' + ('SUCCESS' if ssh_key_ed25519.changed | default(false) else 'SKIPPED/FAILED') if pre_ssh_key_test.rc != 0 else '' }}
+          {{ '- RSA 키: ' + ('SUCCESS' if ssh_key_rsa.changed | default(false) else 'SKIPPED/FAILED') if pre_ssh_key_test.rc != 0 else '' }}
+
+    - name: "=== 4단계: SSH 키 배포 후 중간 테스트 ==="
+      debug:
+        msg: "SSH 키가 제대로 배포되었는지 확인합니다..."
+
+    - name: "SSH 키 인증 중간 테스트"
+      command: ssh -o PreferredAuthentications=publickey -o ConnectTimeout=10 -o PasswordAuthentication=no -o BatchMode=yes {{ ansible_user }}@{{ ansible_host }} echo "SSH_KEY_SUCCESS"
+      delegate_to: localhost
+      register: mid_ssh_key_test
+      failed_when: false
+      changed_when: false
+
+    - name: "SSH 키 배포 검증"
+      debug:
+        msg: |
+          SSH 키 배포 후 테스트:
+          - SSH 키 인증: {{ 'SUCCESS ✅' if mid_ssh_key_test.rc == 0 else 'FAILED ❌' }}
+          
+    - name: "SSH 키 인증 실패시 중단"
+      fail:
+        msg: |
+          ❌ SSH 키 인증이 실패했습니다!
+          다음을 확인하세요:
+          1. 공개키 파일 존재: ~/.ssh/id_ed25519.pub 또는 ~/.ssh/id_rsa.pub
+          2. SSH 서비스 상태
+          3. 네트워크 연결
+      when: mid_ssh_key_test.rc != 0
+
+    - name: "=== 5단계: SSH 보안 설정 강화 ==="
+      debug:
+        msg: "SSH 보안 설정을 강화합니다..."
+
+    - name: "SSH 설정 강화 - PasswordAuthentication 비활성화"
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PasswordAuthentication'
+        line: 'PasswordAuthentication no'
+        backup: yes
+      notify: restart_ssh_and_verify
+
+    - name: "SSH 설정 강화 - MaxAuthTries 설정"
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?MaxAuthTries'
+        line: "MaxAuthTries {{ ssh_max_auth_tries }}"
+
+    - name: "SSH 설정 강화 - ClientAliveInterval 설정"
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?ClientAliveInterval'
+        line: "ClientAliveInterval {{ ssh_client_alive_interval }}"
+
+    - name: "SSH 설정 강화 - ClientAliveCountMax 설정"
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?ClientAliveCountMax'
+        line: "ClientAliveCountMax {{ ssh_client_alive_count_max }}"
+
+    - name: "SSH 설정 강화 - PermitEmptyPasswords 비활성화"
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PermitEmptyPasswords'
+        line: 'PermitEmptyPasswords no'
+
+    - name: "SSH 설정 강화 - X11Forwarding 비활성화"
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?X11Forwarding'
+        line: 'X11Forwarding no'
+
+    - name: "SSH 설정 문법 확인"
+      command: sshd -t
+      changed_when: false
+
+  handlers:
+    - name: restart_ssh_and_verify
+      block:
+        - name: "SSH 서비스 재시작"
+          service:
+            name: ssh
+            state: restarted
+
+        - name: "SSH 재시작 후 대기 (10초)"
+          wait_for:
+            port: 22
+            host: "{{ ansible_host }}"
+            timeout: 30
+          delegate_to: localhost
+
+        - name: "=== 6단계: 최종 인증 방법 검증 ==="
+          debug:
+            msg: "SSH 보안 설정 후 인증 방법을 검증합니다..."
+
+        - name: "최종 SSH 키 인증 테스트"
+          command: ssh -o PreferredAuthentications=publickey -o ConnectTimeout=10 -o PasswordAuthentication=no -o BatchMode=yes {{ ansible_user }}@{{ ansible_host }} echo "SSH_KEY_FINAL_TEST"
+          delegate_to: localhost
+          register: final_ssh_key_test
+          failed_when: false
+          changed_when: false
+
+        - name: "최종 패스워드 인증 테스트"
+          command: ssh -o PreferredAuthentications=password -o ConnectTimeout=5 -o PubkeyAuthentication=no -o StrictHostKeyChecking=no -o BatchMode=yes {{ ansible_user }}@{{ ansible_host }} echo "PASSWORD_TEST"
+          delegate_to: localhost
+          register: final_password_test
+          failed_when: false
+          changed_when: false
+
+        - name: "🎉 최종 검증 결과"
+          debug:
+            msg: |
+              ================================
+              SSH 인증 방법 최종 검증 결과
+              ================================
+              
+              ✅ SSH 키 인증: {{ 'SUCCESS' if final_ssh_key_test.rc == 0 else 'FAILED' }}
+              ❌ 패스워드 인증: {{ 'BLOCKED (보안 강화됨)' if final_password_test.rc != 0 else 'WARNING: 여전히 활성화됨' }}
+              
+              {{ '🎉 SSH 키 기반 인증 설정이 성공적으로 완료되었습니다!' if final_ssh_key_test.rc == 0 else '⚠️  설정을 다시 확인해주세요.' }}
+              
+              연결 테스트 방법:
+              ==================
+              1. Ansible로 테스트:
+                 ansible {{ inventory_hostname }} -m ping
+              
+              2. SSH 키로 직접 연결:
+                 ssh {{ ansible_user }}@{{ ansible_host }}
+              
+              3. 패스워드 연결 시도 (실패해야 정상):
+                 ssh -o PreferredAuthentications=password {{ ansible_user }}@{{ ansible_host }}
+                 → "Permission denied" 메시지가 나와야 함
+              
+              ================================
