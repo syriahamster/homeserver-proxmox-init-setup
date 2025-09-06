@@ -49,6 +49,9 @@
     - name: "3️⃣ APT 저장소 설정 실행"
       include: 02-setup-proxmox-apt.yml
 
+    - name: "4️⃣ Git 및 개발 도구 설치 실행"
+      include: 03-install-git.yml
+
     - name: "🎉 모든 설정 완료!"
       debug:
         msg: |

@@ -53,7 +53,7 @@ ansible-playbook playbooks/00-setup-all.yml
 ```
 
 **이 명령어 하나로 모든 설정이 자동으로 완료됩니다!**
-- SSH 키 설정 → 연결 테스트 → APT 저장소 설정
+- SSH 키 설정 → 연결 테스트 → APT 저장소 설정 → Git 및 개발 도구 설치
 
 ### ⚠️ 수동 설정 (단계별 실행)
 
@@ -70,6 +70,9 @@ ansible proxmox-server -m ping
 
 # 3️⃣ APT 저장소 설정 (권장 - 연결 확인 후)
 ansible-playbook playbooks/02-setup-proxmox-apt.yml
+
+# 4️⃣ Git 및 개발 도구 설치
+ansible-playbook playbooks/03-install-git.yml
 ```
 
 ---
