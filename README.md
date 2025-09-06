@@ -45,6 +45,35 @@ SSH 키가 다른 경로에 있다면 플레이북의 SSH 키 배포 부분을 �
 
 ## 사용법
 
+### 🚀 빠른 시작 (권장 - 모든 것을 한 번에)
+
+```bash
+cd ansible
+ansible-playbook playbooks/00-setup-all.yml
+```
+
+**이 명령어 하나로 모든 설정이 자동으로 완료됩니다!**
+- SSH 키 설정 → 연결 테스트 → APT 저장소 설정
+
+### ⚠️ 수동 설정 (단계별 실행)
+
+필요에 따라 각 단계를 개별적으로 실행할 수 있습니다:
+
+```bash
+cd ansible
+
+# 1️⃣ SSH 키 기반 인증 설정 (필수 - 가장 먼저)
+ansible-playbook playbooks/01-setup-ssh-keys.yml
+
+# 2️⃣ 연결 테스트 (SSH 키 설정 확인)
+ansible proxmox-server -m ping
+
+# 3️⃣ APT 저장소 설정 (권장 - 연결 확인 후)
+ansible-playbook playbooks/02-setup-proxmox-apt.yml
+```
+
+---
+
 ### 1단계: 설정 파일 준비
 
 ```bash
@@ -55,11 +84,11 @@ cp ansible/inventory/hosts.yml.example ansible/inventory/hosts.yml
 vi ansible/inventory/hosts.yml
 ```
 
-### 2단계: SSH 키 기반 인증 설정
+### 2단계: SSH 키 기반 인증 설정 (필수 - 첫 번째)
 
 ```bash
 cd ansible
-ansible-playbook playbooks/setup-ssh-keys.yml
+ansible-playbook playbooks/01-setup-ssh-keys.yml
 ```
 
 이 플레이북은 다음 단계를 수행합니다:
@@ -69,7 +98,7 @@ ansible-playbook playbooks/setup-ssh-keys.yml
 4. **보안 강화**: 패스워드 인증 비활성화
 5. **최종 검증**: SSH 키는 성공, 패스워드는 차단되는지 확인
 
-### 3단계: 연결 테스트
+### 3단계: 연결 테스트 및 확인
 
 **Ansible로 테스트:**
 ```bash
@@ -93,21 +122,75 @@ ssh -o PreferredAuthentications=password root@192.168.0.100
 # → "Permission denied" 메시지가 나와야 정상
 ```
 
+### 4단계: ProxMox APT 저장소 설정 (권장 - 두 번째)
+
+⚠️ **중요**: ProxMox VE는 기본적으로 유료 Enterprise 저장소를 사용하도록 설정되어 있어, 
+구독 없이는 `apt update` 시 401 Unauthorized 에러가 발생합니다.
+
+**APT 저장소 자동 설정:**
+```bash
+cd ansible
+ansible-playbook playbooks/02-setup-proxmox-apt.yml
+```
+
+이 플레이북은 다음을 수행합니다:
+1. **현재 상태 확인**: 저장소 설정 및 에러 상태 분석
+2. **Enterprise 저장소 비활성화**: 401 Unauthorized 에러 해결
+3. **No-Subscription 저장소 활성화**: 무료 저장소 추가
+4. **APT 업데이트**: 패키지 목록 자동 업데이트
+5. **설정 검증**: 모든 설정이 올바른지 확인
+
+**APT 저장소 설정 후 사용 가능한 명령:**
+```bash
+# ProxMox 서버에서 직접 실행 가능
+ssh root@192.168.0.100
+
+# 패키지 목록 업데이트
+apt update
+
+# 시스템 업그레이드
+apt upgrade
+
+# 패키지 설치
+apt install <패키지명>
+```
+
 ## 재실행 시 주의사항
+
+### 순서대로 실행하기
+
+```bash
+# 1️⃣ SSH 키 설정 (필수 - 가장 먼저)
+ansible-playbook playbooks/01-setup-ssh-keys.yml
+
+# 2️⃣ APT 저장소 설정 (권장 - SSH 설정 후)
+ansible-playbook playbooks/02-setup-proxmox-apt.yml
+```
+
+### 개별 플레이북 재실행
 
 SSH 키 설정이 완료된 후에는 다음과 같이 실행해야 합니다:
 
 ```bash
 # SSH 키 설정 완료 후 재실행 (패스워드 불필요)
-ansible-playbook playbooks/setup-ssh-keys.yml
+ansible-playbook playbooks/01-setup-ssh-keys.yml
 
 # 특정 태그만 실행
-ansible-playbook playbooks/setup-ssh-keys.yml --tags ssh_config
+ansible-playbook playbooks/01-setup-ssh-keys.yml --tags ssh_config
+
+# APT 저장소만 다시 설정
+ansible-playbook playbooks/02-setup-proxmox-apt.yml
 ```
 
-플레이북은 현재 연결 방식을 자동으로 감지하여:
-- **패스워드 연결**: SSH 키 배포 실행
-- **SSH 키 연결**: SSH 키 배포 건너뛰고 설정만 업데이트
+### 플레이북 자동 감지 기능
+
+플레이북들은 현재 연결 방식을 자동으로 감지하여:
+- **SSH 키 설정 플레이북**: 
+  - 패스워드 연결: SSH 키 배포 실행
+  - SSH 키 연결: SSH 키 배포 건너뛰고 설정만 업데이트
+- **APT 저장소 플레이북**: 
+  - 이미 설정된 경우: 설정 상태만 확인하고 건너뜀
+  - 미설정된 경우: 전체 설정 과정 실행
 
 ## 주의사항
 

@@ -1,0 +1,201 @@
+---
+- name: "ProxMox VE APT 저장소 자동 설정"
+  hosts: proxmox
+  gather_facts: yes
+  vars:
+    # 사용자 설정 (필요에 따라 수정 가능)
+    setup_no_subscription_repo: true
+    disable_enterprise_repos: true
+    auto_update_cache: true
+    show_detailed_info: true
+
+  tasks:
+    - name: "=== ProxMox VE APT 저장소 자동 설정 시작 ==="
+      debug:
+        msg: |
+          ================================
+          ProxMox VE APT 저장소 자동 설정
+          ================================
+          
+          🎯 목적: ProxMox VE의 APT 저장소 문제 해결
+          📋 작업 내용:
+          1. 현재 저장소 상태 확인
+          2. Enterprise 저장소 비활성화 (401 Unauthorized 에러 해결)
+          3. No-Subscription 저장소 활성화 (무료)
+          4. APT 패키지 목록 업데이트
+          5. 설정 검증
+          
+          ⚠️ 참고: No-Subscription 저장소는 무료이지만 상업적 지원이 없습니다.
+          ================================
+
+    - name: "1단계: 현재 시스템 정보 확인"
+      debug:
+        msg: |
+          시스템 정보:
+          - OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
+          - 아키텍처: {{ ansible_architecture }}
+          - 호스트명: {{ ansible_hostname }}
+
+    - name: "2단계: 현재 APT 저장소 상태 확인"
+      shell: |
+        echo "=== 현재 저장소 파일 목록 ==="
+        ls -la /etc/apt/sources.list.d/ | grep -E "(pve|ceph)" || echo "ProxMox 저장소 파일 없음"
+        
+        echo -e "\n=== APT 업데이트 테스트 (에러 확인용) ==="
+        apt update 2>&1 | grep -E "(401|Unauthorized|enterprise)" || echo "Enterprise 저장소 관련 에러 없음"
+      register: current_status
+      changed_when: false
+      failed_when: false
+
+    - name: "현재 상태 출력"
+      debug:
+        msg: |
+          현재 APT 저장소 상태:
+          {{ current_status.stdout }}
+      when: show_detailed_info | default(true)
+
+    - name: "3단계: Enterprise 저장소 비활성화"
+      block:
+        - name: "Enterprise 저장소 .sources 파일 비활성화"
+          shell: |
+            for file in /etc/apt/sources.list.d/pve-enterprise.sources /etc/apt/sources.list.d/ceph.sources; do
+              if [ -f "$file" ]; then
+                echo "비활성화: $file"
+                mv "$file" "$file.disabled"
+              else
+                echo "파일 없음: $file"
+              fi
+            done
+          register: disable_sources
+          when: disable_enterprise_repos | default(true)
+
+        - name: "Enterprise 저장소 .list 파일 비활성화"
+          lineinfile:
+            path: "{{ item }}"
+            regexp: '^deb https://enterprise.proxmox.com'
+            line: '# deb https://enterprise.proxmox.com (비활성화 - 구독 필요)'
+            create: yes
+            backup: yes
+          loop:
+            - /etc/apt/sources.list.d/pve-enterprise.list
+            - /etc/apt/sources.list.d/ceph.list
+          when: disable_enterprise_repos | default(true)
+          failed_when: false
+
+        - name: "Enterprise 저장소 비활성화 결과"
+          debug:
+            msg: |
+              Enterprise 저장소 비활성화 완료:
+              {{ disable_sources.stdout if disable_sources is defined else '작업 건너뜀' }}
+
+    - name: "4단계: No-Subscription 저장소 활성화"
+      block:
+        - name: "ProxMox No-Subscription 저장소 추가"
+          copy:
+            content: |
+              # ProxMox VE No-Subscription Repository (무료)
+              # 이 저장소는 무료이지만 상업적 지원이 제공되지 않습니다
+              # 프로덕션 환경에서는 Enterprise 구독을 권장합니다
+              # 
+              # 추가 날짜: {{ ansible_date_time.iso8601 }}
+              # 관리자: Ansible 자동 설정
+              
+              deb http://download.proxmox.com/debian/pve {{ ansible_distribution_release }} pve-no-subscription
+            dest: /etc/apt/sources.list.d/pve-no-subscription.list
+            backup: yes
+            owner: root
+            group: root
+            mode: '0644'
+          when: setup_no_subscription_repo | default(true)
+
+        - name: "저장소 추가 확인"
+          debug:
+            msg: |
+              ✅ No-Subscription 저장소가 추가되었습니다
+              파일: /etc/apt/sources.list.d/pve-no-subscription.list
+              내용: deb http://download.proxmox.com/debian/pve {{ ansible_distribution_release }} pve-no-subscription
+
+    - name: "5단계: APT 패키지 목록 업데이트"
+      block:
+        - name: "APT 캐시 업데이트 실행"
+          apt:
+            update_cache: yes
+            cache_valid_time: 0
+            force_apt_get: yes
+          register: apt_update_result
+          when: auto_update_cache | default(true)
+
+        - name: "APT 업데이트 결과 확인"
+          debug:
+            msg: |
+              {{ '✅ APT 패키지 목록 업데이트 성공!' if apt_update_result.changed else '✅ APT 캐시가 이미 최신 상태입니다.' }}
+          when: auto_update_cache | default(true)
+
+    - name: "6단계: 설정 검증 및 테스트"
+      block:
+        - name: "저장소 설정 검증"
+          shell: |
+            echo "=== 활성화된 저장소 확인 ==="
+            echo "ProxMox 저장소:"
+            grep -h "^deb.*proxmox" /etc/apt/sources.list.d/*.list 2>/dev/null || echo "  없음"
+            
+            echo -e "\nDebian 기본 저장소:"  
+            grep -h "^deb.*debian" /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null | head -2 || echo "  없음"
+            
+            echo -e "\n=== 비활성화된 Enterprise 저장소 확인 ==="
+            ls -la /etc/apt/sources.list.d/ | grep -E "(disabled|enterprise)" || echo "  비활성화된 파일 없음"
+            
+            echo -e "\n=== 업그레이드 가능한 패키지 확인 ==="
+            apt list --upgradable 2>/dev/null | head -5 || echo "  업그레이드 가능한 패키지 없음"
+          register: verification_result
+          changed_when: false
+
+        - name: "검증 결과 출력"
+          debug:
+            msg: |
+              저장소 설정 검증 결과:
+              {{ verification_result.stdout }}
+
+    - name: "🎉 설정 완료 및 사용 안내"
+      debug:
+        msg: |
+          ================================
+          🎉 ProxMox VE APT 저장소 설정 완료!
+          ================================
+          
+          ✅ 완료된 작업:
+          • Enterprise 저장소 비활성화 (401 Unauthorized 에러 해결)
+          • No-Subscription 저장소 활성화
+          • APT 패키지 목록 업데이트 완료
+          • 저장소 설정 검증 완료
+          
+          📋 이제 사용 가능한 명령:
+          
+          1. 패키지 목록 업데이트:
+             apt update
+          
+          2. 시스템 업그레이드:
+             apt upgrade
+             
+          3. 특정 패키지 설치:
+             apt install <패키지명>
+             
+          4. 업그레이드 가능한 패키지 확인:
+             apt list --upgradable
+          
+          🌐 ProxMox 웹 관리 페이지:
+             https://{{ ansible_host }}:8006
+          
+          ⚠️ 중요 참고사항:
+          • No-Subscription 저장소는 무료이지만 상업적 지원이 없습니다
+          • 프로덕션(운영) 환경에서는 Enterprise 구독을 권장합니다
+          • 정기적인 시스템 업데이트와 백업을 잊지 마세요!
+          • 이 설정은 언제든지 되돌릴 수 있습니다
+          
+          🔄 설정 되돌리기 (필요시):
+          • Enterprise 저장소 재활성화:
+            mv /etc/apt/sources.list.d/pve-enterprise.sources.disabled /etc/apt/sources.list.d/pve-enterprise.sources
+          • No-Subscription 저장소 제거:
+            rm /etc/apt/sources.list.d/pve-no-subscription.list
+          
+          ================================
