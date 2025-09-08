@@ -1,0 +1,342 @@
+---
+- name: "Docker 및 Docker Compose 설치"
+  hosts: proxmox
+  gather_facts: yes
+  vars:
+    # Docker 설정
+    docker_users: []            # Docker 그룹에 추가할 사용자들 (예: ['user1', 'user2'])
+    docker_compose_version: "latest"  # 특정 버전 지정 가능 (예: "v2.24.5")
+    
+  tasks:
+    - name: "=== Docker & Docker Compose 설치 시작 ==="
+      debug:
+        msg: |
+          ================================
+          Docker & Docker Compose 자동 설치
+          ================================
+          
+          🎯 목적: ProxMox 서버에 컨테이너 환경 구축
+          📋 설치 과정:
+          • Docker CE (Community Edition)
+          • Docker Compose (최신 버전)
+          • Docker 서비스 설정 및 활성화
+          • 사용자 권한 설정 (선택사항)
+          
+          🐳 주요 기능:
+          • 컨테이너 기반 애플리케이션 실행
+          • Docker Compose로 멀티 컨테이너 관리
+          • 이미지 빌드 및 배포
+          
+          ⏱️ 예상 소요시간: 3-5분
+          ================================
+
+    - name: "1단계: 시스템 정보 확인"
+      debug:
+        msg: |
+          시스템 정보:
+          - OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
+          - 아키텍처: {{ ansible_architecture }}
+          - 커널: {{ ansible_kernel }}
+          - 메모리: {{ ansible_memfree_mb }}MB 사용 가능
+
+    - name: "2단계: 기존 Docker 패키지 제거 (충돌 방지)"
+      apt:
+        name:
+          - docker.io
+          - docker-doc
+          - docker-compose
+          - podman-docker
+          - containerd
+          - runc
+        state: absent
+        purge: yes
+      register: old_docker_removal
+      failed_when: false
+
+    - name: "기존 패키지 제거 결과"
+      debug:
+        msg: |
+          {{ '✅ 기존 Docker 패키지 제거 완료' if old_docker_removal.changed else '✅ 제거할 기존 패키지 없음' }}
+
+    - name: "3단계: 필수 패키지 설치 (Docker 저장소 추가용)"
+      apt:
+        name:
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - apt-transport-https
+        state: present
+        update_cache: yes
+      register: prereq_install
+
+    - name: "필수 패키지 설치 결과"
+      debug:
+        msg: |
+          {{ '✅ 필수 패키지 설치 완료' if prereq_install.changed else '✅ 필수 패키지가 이미 설치되어 있음' }}
+
+    - name: "4단계: Docker GPG 키 디렉터리 생성"
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: "5단계: Docker GPG 키 다운로드 및 추가"
+      shell: |
+        curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+        chmod a+r /etc/apt/keyrings/docker.gpg
+      args:
+        creates: /etc/apt/keyrings/docker.gpg
+      register: docker_gpg_key
+
+    - name: "GPG 키 추가 결과"
+      debug:
+        msg: |
+          {{ '✅ Docker GPG 키 추가 완료' if docker_gpg_key.changed else '✅ Docker GPG 키가 이미 존재함' }}
+
+    - name: "6단계: Docker APT 저장소 추가"
+      shell: |
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+      args:
+        creates: /etc/apt/sources.list.d/docker.list
+      register: docker_repo_add
+
+    - name: "저장소 추가 결과"
+      debug:
+        msg: |
+          {{ '✅ Docker 저장소 추가 완료' if docker_repo_add.changed else '✅ Docker 저장소가 이미 설정되어 있음' }}
+
+    - name: "7단계: APT 패키지 목록 업데이트 (Docker 저장소 반영)"
+      apt:
+        update_cache: yes
+      register: apt_update
+
+    - name: "APT 업데이트 결과"
+      debug:
+        msg: |
+          ✅ Docker 저장소 패키지 목록 업데이트 완료
+
+    - name: "8단계: Docker CE 설치"
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+        state: present
+        update_cache: no
+      register: docker_install
+
+    - name: "Docker CE 설치 결과"
+      debug:
+        msg: |
+          {{ '✅ Docker CE 설치 완료' if docker_install.changed else '✅ Docker CE가 이미 설치되어 있음' }}
+
+    - name: "9단계: Docker 서비스 활성화 및 시작"
+      systemd:
+        name: docker
+        enabled: yes
+        state: started
+      register: docker_service
+
+    - name: "Docker 서비스 활성화 결과"
+      debug:
+        msg: |
+          ✅ Docker 서비스 활성화 및 시작 완료
+
+    - name: "10단계: Docker Compose 최신 버전 확인"
+      uri:
+        url: https://api.github.com/repos/docker/compose/releases/latest
+        method: GET
+        return_content: yes
+      register: compose_latest_release
+      when: docker_compose_version == "latest"
+
+    - name: "11단계: Docker Compose 다운로드 및 설치"
+      get_url:
+        url: "https://github.com/docker/compose/releases/download/{{ docker_compose_version if docker_compose_version != 'latest' else compose_latest_release.json.tag_name }}/docker-compose-linux-{{ ansible_architecture }}"
+        dest: /usr/local/bin/docker-compose
+        mode: '0755'
+        owner: root
+        group: root
+      register: compose_install
+
+    - name: "Docker Compose 설치 결과"
+      debug:
+        msg: |
+          {{ '✅ Docker Compose 설치 완료' if compose_install.changed else '✅ Docker Compose가 이미 설치되어 있음' }}
+
+    - name: "12단계: Docker Compose 심볼릭 링크 생성"
+      file:
+        src: /usr/local/bin/docker-compose
+        dest: /usr/bin/docker-compose
+        state: link
+      register: compose_symlink
+
+    - name: "심볼릭 링크 생성 결과"
+      debug:
+        msg: |
+          {{ '✅ Docker Compose 심볼릭 링크 생성 완료' if compose_symlink.changed else '✅ 심볼릭 링크가 이미 존재함' }}
+
+    - name: "13단계: Docker 및 Docker Compose 설치 확인"
+      shell: |
+        echo "=== Docker 설치 정보 ==="
+        echo "Docker 버전: $(docker --version 2>/dev/null || echo '설치 확인 불가')"
+        echo "Docker Compose 버전: $(docker-compose --version 2>/dev/null || echo '설치 확인 불가')"
+        
+        echo -e "\n=== Docker 서비스 상태 ==="
+        systemctl is-active docker && echo "✅ Docker 서비스: 실행 중" || echo "❌ Docker 서비스: 중지됨"
+        systemctl is-enabled docker && echo "✅ Docker 서비스: 자동 시작 활성화됨" || echo "❌ Docker 서비스: 자동 시작 비활성화됨"
+        
+        echo -e "\n=== Docker 정보 ==="
+        docker info 2>/dev/null | head -5 && echo "✅ Docker 데몬 연결 성공" || echo "❌ Docker 데몬 연결 실패"
+        
+        echo -e "\n=== 시스템 리소스 ==="
+        df -h /var/lib/docker 2>/dev/null | tail -1 | awk '{print "Docker 저장소: " $4 " 사용 가능"}' || echo "Docker 저장소: /var/lib/docker 확인 불가"
+      register: docker_status
+      changed_when: false
+
+    - name: "Docker 상태 확인 결과"
+      debug:
+        msg: |
+          현재 Docker 상태:
+          {{ docker_status.stdout }}
+
+    - name: "14단계: Docker 그룹에 사용자 추가 (선택사항)"
+      user:
+        name: "{{ item }}"
+        groups: docker
+        append: yes
+      loop: "{{ docker_users }}"
+      when: docker_users | length > 0
+      register: user_docker_group
+
+    - name: "사용자 그룹 추가 결과"
+      debug:
+        msg: |
+          {{ '✅ 사용자들을 Docker 그룹에 추가 완료: ' + (docker_users | join(', ')) if docker_users | length > 0 else '⏭️ 추가할 사용자 없음' }}
+
+    - name: "15단계: Docker Compose 테스트"
+      shell: |
+        mkdir -p /tmp/docker-test
+        cd /tmp/docker-test
+        cat > docker-compose.yml << 'EOF'
+        version: '3.8'
+        services:
+          hello-world:
+            image: hello-world:latest
+        EOF
+        docker-compose config --quiet && echo "✅ Docker Compose 설정 파일 검증 성공" || echo "❌ Docker Compose 설정 파일 검증 실패"
+        rm -rf /tmp/docker-test
+      register: compose_test
+      changed_when: false
+
+    - name: "Docker Compose 테스트 결과"
+      debug:
+        msg: |
+          {{ compose_test.stdout }}
+
+    - name: "🎉 Docker & Docker Compose 설치 완료 및 사용 안내"
+      debug:
+        msg: |
+          ================================
+          🎉 Docker & Docker Compose 설치 완료!
+          ================================
+          
+          ✅ 설치 완료된 구성 요소:
+          • Docker CE (Community Edition)
+          • Docker Compose (최신 버전)
+          • Docker 데몬 서비스 (자동 시작)
+          • 필요한 모든 플러그인 및 도구
+          
+          📋 기본 Docker 명령어:
+          
+          1. 🐳 컨테이너 실행:
+             docker run hello-world
+             docker run -d -p 80:80 nginx
+             
+          2. 📦 이미지 관리:
+             docker images                 # 이미지 목록
+             docker pull <이미지명>        # 이미지 다운로드
+             docker rmi <이미지명>         # 이미지 삭제
+             
+          3. 🔄 컨테이너 관리:
+             docker ps                     # 실행 중인 컨테이너
+             docker ps -a                  # 모든 컨테이너
+             docker stop <컨테이너ID>      # 컨테이너 중지
+             docker rm <컨테이너ID>        # 컨테이너 삭제
+          
+          📋 Docker Compose 명령어:
+          
+          1. 🚀 서비스 실행:
+             docker-compose up -d          # 백그라운드에서 실행
+             docker-compose down           # 서비스 중지 및 제거
+             
+          2. 📊 상태 확인:
+             docker-compose ps             # 서비스 상태
+             docker-compose logs           # 서비스 로그
+             
+          3. ⚙️ 관리:
+             docker-compose restart        # 서비스 재시작
+             docker-compose pull           # 이미지 업데이트
+          
+          💡 유용한 Docker 명령어:
+          
+          • 시스템 정보:
+            docker info
+            docker system df              # 디스크 사용량
+            
+          • 정리 작업:
+            docker system prune           # 사용하지 않는 리소스 정리
+            docker container prune        # 중지된 컨테이너 정리
+            docker image prune            # 사용하지 않는 이미지 정리
+            
+          • 로그 확인:
+            docker logs <컨테이너명>
+            docker logs -f <컨테이너명>   # 실시간 로그
+          
+          🏗️ ProxMox에서 Docker 활용 예시:
+          
+          1. 웹 서버 실행:
+             docker run -d -p 8080:80 --name nginx nginx
+             
+          2. 데이터베이스 실행:
+             docker run -d -p 3306:3306 --name mysql \
+               -e MYSQL_ROOT_PASSWORD=password mysql
+               
+          3. 모니터링 스택:
+             # Portainer (Docker GUI 관리)
+             docker run -d -p 9000:9000 --name portainer \
+               -v /var/run/docker.sock:/var/run/docker.sock \
+               portainer/portainer-ce
+          
+          🔧 문제 해결:
+          
+          • Docker 서비스 재시작:
+            sudo systemctl restart docker
+            
+          • 권한 문제 해결 (재로그인 필요):
+            sudo usermod -aG docker $USER
+            
+          • 저장소 공간 부족:
+            docker system prune -a
+            
+          • 설정 확인:
+            docker info
+            docker version
+          
+          ⚠️ 보안 권장사항:
+          
+          • Docker 데몬은 root 권한으로 실행됩니다
+          • 신뢰할 수 있는 이미지만 사용하세요
+          • 프로덕션 환경에서는 보안 스캔을 수행하세요
+          • 네트워크 포트 노출을 최소화하세요
+          
+          🌟 다음 단계:
+          
+          • Portainer 설치로 웹 GUI 관리: http://<서버IP>:9000
+          • Docker Compose로 멀티 컨테이너 애플리케이션 구성
+          • Docker Registry 구축으로 프라이빗 이미지 저장소 운영
+          • CI/CD 파이프라인 구축으로 자동 배포
+          
+          ================================
