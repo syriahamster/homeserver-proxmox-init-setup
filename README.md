@@ -53,7 +53,7 @@ ansible-playbook playbooks/00-setup-all.yml
 ```
 
 **이 명령어 하나로 모든 설정이 자동으로 완료됩니다!**
-- SSH 키 설정 → 연결 테스트 → APT 저장소 설정 → Git 및 개발 도구 설치 → Docker & Docker Compose 설치 → Bash 환경 커스터마이징
+- SSH 키 설정 → 연결 테스트 → APT 저장소 설정 → Git 및 개발 도구 설치 → Docker & Docker Compose 설치 → Bash 환경 커스터마이징 → Fail2ban 보안 설정
 
 ### ⚠️ 수동 설정 (단계별 실행)
 
@@ -79,6 +79,9 @@ ansible-playbook playbooks/04-install-docker-compose.yml
 
 # 6️⃣ Bash 환경 설정 및 커스터마이징
 ansible-playbook playbooks/05-setup-bash-config.yml
+
+# 7️⃣ Fail2ban 보안 설정
+ansible-playbook playbooks/06-setup-fail2ban.yml
 ```
 
 ---

@@ -1,0 +1,358 @@
+---
+- name: "Fail2ban 보안 설정"
+  hosts: proxmox
+  gather_facts: yes
+  vars:
+    # Fail2ban 기본 설정
+    fail2ban_bantime: 3600      # 차단 시간 (초) - 1시간
+    fail2ban_findtime: 600      # 감지 시간 (초) - 10분
+    fail2ban_maxretry: 3        # 최대 실패 횟수
+    fail2ban_ignoreip:          # 차단 제외 IP 목록
+      - "127.0.0.1/8"
+      - "::1"
+      - "192.168.0.0/16"        # 로컬 네트워크 (필요에 따라 수정)
+      - "10.0.0.0/8"
+      - "172.16.0.0/12"
+    
+    # 활성화할 jail 목록
+    fail2ban_jails:
+      - name: "sshd"
+        enabled: true
+        port: "22"
+        logpath: "/var/log/auth.log"
+      - name: "sshd-ddos"
+        enabled: true
+        port: "22"
+        logpath: "/var/log/auth.log"
+    
+  tasks:
+    - name: "=== Fail2ban 보안 설정 시작 ==="
+      debug:
+        msg: |
+          ================================
+          Fail2ban 침입 차단 시스템 설치
+          ================================
+          
+          🎯 목적: ProxMox 서버 보안 강화
+          📋 설치 및 설정 내용:
+          • Fail2ban 침입 차단 시스템 설치
+          • SSH 브루트포스 공격 차단
+          • 기본 보안 정책 설정
+          • 로컬 네트워크 예외 처리
+          • 실시간 모니터링 활성화
+          
+          ⚙️ 주요 설정:
+          • 차단 시간: {{ fail2ban_bantime }}초 ({{ (fail2ban_bantime / 60) | int }}분)
+          • 감지 시간: {{ fail2ban_findtime }}초 ({{ (fail2ban_findtime / 60) | int }}분)
+          • 최대 실패: {{ fail2ban_maxretry }}회
+          
+          ⏱️ 예상 소요시간: 2-3분
+          ================================
+
+    - name: "1단계: 시스템 정보 및 현재 보안 상태 확인"
+      debug:
+        msg: |
+          시스템 정보:
+          - OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
+          - 아키텍처: {{ ansible_architecture }}
+          - 현재 시간: {{ ansible_date_time.iso8601 }}
+          - SSH 포트: 22 (기본값)
+
+    - name: "2단계: 기존 Fail2ban 상태 확인"
+      shell: |
+        echo "=== 현재 상태 확인 ==="
+        if systemctl is-active fail2ban >/dev/null 2>&1; then
+            echo "Fail2ban 서비스: 실행 중"
+            fail2ban-client status 2>/dev/null || echo "클라이언트 명령 사용 불가"
+        else
+            echo "Fail2ban 서비스: 설치되지 않음 또는 중지됨"
+        fi
+        
+        echo -e "\n=== 현재 차단된 IP 확인 ==="
+        iptables -L -n | grep -i reject | head -5 || echo "현재 차단된 IP 없음"
+      register: fail2ban_status_check
+      changed_when: false
+      failed_when: false
+
+    - name: "현재 보안 상태"
+      debug:
+        msg: |
+          현재 Fail2ban 상태:
+          {{ fail2ban_status_check.stdout }}
+
+    - name: "3단계: APT 패키지 목록 업데이트"
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: "4단계: Fail2ban 및 필수 패키지 설치"
+      apt:
+        name:
+          - fail2ban
+          - iptables
+          - iptables-persistent
+        state: present
+      register: fail2ban_install
+
+    - name: "Fail2ban 설치 결과"
+      debug:
+        msg: |
+          {{ '✅ Fail2ban 및 관련 패키지 설치 완료' if fail2ban_install.changed else '✅ Fail2ban이 이미 설치되어 있음' }}
+
+    - name: "5단계: Fail2ban 설정 디렉터리 생성"
+      file:
+        path: /etc/fail2ban
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: "6단계: Fail2ban 기본 설정 파일 생성 (/etc/fail2ban/jail.local)"
+      copy:
+        dest: /etc/fail2ban/jail.local
+        owner: root
+        group: root
+        mode: '0644'
+        backup: yes
+        content: |
+          # Fail2ban 기본 설정 - ProxMox 서버용
+          # 이 파일은 Ansible에 의해 자동 생성됨
+          
+          [DEFAULT]
+          # 기본 차단 시간 (초)
+          bantime = {{ fail2ban_bantime }}
+          
+          # 감지 시간 윈도우 (초)
+          findtime = {{ fail2ban_findtime }}
+          
+          # 최대 실패 횟수
+          maxretry = {{ fail2ban_maxretry }}
+          
+          # 차단 제외 IP 목록
+          ignoreip = {{ fail2ban_ignoreip | join(' ') }}
+          
+          # 차단 액션 (iptables 사용)
+          banaction = iptables-multiport
+          banaction_allports = iptables-allports
+          
+          # 로그 레벨
+          loglevel = INFO
+          
+          # 로그 파일 위치
+          logtarget = /var/log/fail2ban.log
+          
+          # ====================================
+          # SSH 보안 설정
+          # ====================================
+          
+          [sshd]
+          enabled = true
+          port = ssh
+          logpath = /var/log/auth.log
+          maxretry = {{ fail2ban_maxretry }}
+          bantime = {{ fail2ban_bantime }}
+          findtime = {{ fail2ban_findtime }}
+          
+          [sshd-ddos]
+          enabled = true
+          port = ssh
+          logpath = /var/log/auth.log
+          maxretry = 2
+          bantime = {{ fail2ban_bantime * 2 }}
+          findtime = {{ fail2ban_findtime }}
+          
+          # ====================================
+          # ProxMox 웹 인터페이스 보안 (선택사항)
+          # ====================================
+          
+          [proxmox]
+          enabled = false
+          port = https,http,8006
+          logpath = /var/log/daemon.log
+          maxretry = 3
+          bantime = {{ fail2ban_bantime }}
+          
+          # ====================================
+          # 추가 보안 설정 (비활성화됨)
+          # ====================================
+          
+          [apache-auth]
+          enabled = false
+          
+          [apache-badbots]
+          enabled = false
+          
+          [apache-noscript]
+          enabled = false
+          
+          [nginx-http-auth]
+          enabled = false
+      register: jail_config
+
+    - name: "Fail2ban 설정 파일 생성 결과"
+      debug:
+        msg: |
+          {{ '✅ 새로운 jail.local 설정 파일이 생성되었습니다' if jail_config.changed else '✅ jail.local 설정 파일이 이미 최신 상태입니다' }}
+
+    - name: "7단계: Fail2ban 서비스 활성화 및 시작"
+      systemd:
+        name: fail2ban
+        enabled: yes
+        state: restarted
+        daemon_reload: yes
+      register: fail2ban_service
+
+    - name: "Fail2ban 서비스 활성화 결과"
+      debug:
+        msg: |
+          ✅ Fail2ban 서비스가 활성화되고 시작되었습니다
+
+    - name: "8단계: Fail2ban 상태 및 jail 확인"
+      shell: |
+        echo "=== Fail2ban 서비스 상태 ==="
+        systemctl is-active fail2ban && echo "✅ fail2ban 서비스: 실행 중" || echo "❌ fail2ban 서비스: 중지됨"
+        systemctl is-enabled fail2ban && echo "✅ fail2ban 서비스: 자동 시작 활성화" || echo "❌ fail2ban 서비스: 자동 시작 비활성화"
+        
+        echo -e "\n=== 활성화된 Jail 목록 ==="
+        fail2ban-client status 2>/dev/null || echo "fail2ban 클라이언트 연결 실패"
+        
+        echo -e "\n=== SSH Jail 상세 정보 ==="
+        fail2ban-client status sshd 2>/dev/null || echo "sshd jail 정보 확인 불가"
+        
+        echo -e "\n=== 로그 파일 확인 ==="
+        if [ -f /var/log/fail2ban.log ]; then
+            echo "Fail2ban 로그 파일: 존재함"
+            tail -3 /var/log/fail2ban.log 2>/dev/null || echo "로그 읽기 실패"
+        else
+            echo "Fail2ban 로그 파일: 아직 생성되지 않음"
+        fi
+      register: fail2ban_status
+      changed_when: false
+
+    - name: "Fail2ban 상태 확인 결과"
+      debug:
+        msg: |
+          현재 Fail2ban 상태:
+          {{ fail2ban_status.stdout }}
+
+    - name: "9단계: iptables 규칙 확인"
+      shell: |
+        echo "=== 현재 iptables 규칙 ==="
+        echo "INPUT 체인의 fail2ban 규칙:"
+        iptables -L INPUT -v -n | grep -i fail2ban || echo "아직 fail2ban 규칙이 생성되지 않음"
+        
+        echo -e "\n=== 차단된 IP 확인 ==="
+        iptables -L -n | grep -E "(REJECT|DROP)" | head -3 || echo "현재 차단된 IP 없음"
+        
+        echo -e "\n=== fail2ban-client로 차단 IP 확인 ==="
+        fail2ban-client status sshd 2>/dev/null | grep -E "Banned IP list|Currently banned" || echo "sshd jail에서 차단된 IP 없음"
+      register: iptables_check
+      changed_when: false
+
+    - name: "iptables 규칙 확인 결과"
+      debug:
+        msg: |
+          현재 방화벽 상태:
+          {{ iptables_check.stdout }}
+
+    - name: "10단계: Fail2ban 테스트 준비 (안전한 테스트)"
+      shell: |
+        echo "=== Fail2ban 설정 테스트 ==="
+        echo "설정 파일 문법 검사:"
+        fail2ban-client -t 2>/dev/null && echo "✅ 설정 파일 문법 올바름" || echo "❌ 설정 파일에 오류 있음"
+        
+        echo -e "\n=== 활성 필터 확인 ==="
+        fail2ban-client status 2>/dev/null | head -10
+        
+        echo -e "\n=== 모니터링 중인 로그 파일 ==="
+        ls -la /var/log/auth.log /var/log/fail2ban.log 2>/dev/null || echo "일부 로그 파일이 존재하지 않음"
+      register: fail2ban_test
+      changed_when: false
+
+    - name: "Fail2ban 테스트 결과"
+      debug:
+        msg: |
+          Fail2ban 설정 테스트:
+          {{ fail2ban_test.stdout }}
+
+    - name: "🎉 Fail2ban 보안 설정 완료 및 사용 안내"
+      debug:
+        msg: |
+          ================================
+          🎉 Fail2ban 보안 설정 완료!
+          ================================
+          
+          ✅ 설치 및 설정 완료:
+          • Fail2ban 침입 차단 시스템 설치
+          • SSH 브루트포스 공격 차단 활성화
+          • iptables 방화벽 규칙 자동 관리
+          • 실시간 로그 모니터링 시작
+          • 자동 시작 서비스 등록
+          
+          ⚙️ 적용된 보안 정책:
+          • 차단 시간: {{ (fail2ban_bantime / 60) | int }}분
+          • 감지 시간: {{ (fail2ban_findtime / 60) | int }}분 내에
+          • 최대 {{ fail2ban_maxretry }}회 실패 시 차단
+          • 로컬 네트워크는 차단 제외
+          
+          📋 주요 명령어:
+          
+          1. 🔍 상태 확인:
+             fail2ban-client status           # 전체 상태
+             fail2ban-client status sshd      # SSH jail 상태
+             
+          2. 📊 차단 목록 확인:
+             fail2ban-client status sshd | grep "Banned IP"
+             iptables -L -n | grep fail2ban
+             
+          3. 🔓 IP 차단 해제:
+             fail2ban-client set sshd unbanip <IP주소>
+             
+          4. 🚫 수동 IP 차단:
+             fail2ban-client set sshd banip <IP주소>
+             
+          5. 📜 로그 확인:
+             tail -f /var/log/fail2ban.log    # 실시간 로그
+             tail -f /var/log/auth.log        # SSH 인증 로그
+             
+          6. ⚙️ 서비스 관리:
+             systemctl status fail2ban        # 서비스 상태
+             systemctl restart fail2ban       # 서비스 재시작
+          
+          🔧 설정 파일 위치:
+          • 주 설정: /etc/fail2ban/jail.local
+          • 기본 설정: /etc/fail2ban/jail.conf (수정 금지)
+          • 로그 파일: /var/log/fail2ban.log
+          
+          💡 보안 팁:
+          
+          • SSH 키 인증 사용 권장 (이미 설정됨)
+          • 기본 SSH 포트(22) 변경 고려
+          • 정기적인 로그 모니터링 필요
+          • VPN 사용 시 VPN IP 예외 처리
+          
+          🚨 주의사항:
+          
+          • 본인 IP가 차단되면 SSH 접속 불가
+          • 차단 해제는 웹 콘솔 또는 물리적 접근 필요
+          • 로컬 네트워크({{ fail2ban_ignoreip | join(', ') }})는 차단 제외
+          • 설정 변경 후 서비스 재시작 필요
+          
+          📈 모니터링 방법:
+          
+          • 실시간 차단 로그:
+            tail -f /var/log/fail2ban.log | grep Ban
+            
+          • SSH 공격 시도 확인:
+            grep "Failed password" /var/log/auth.log | tail -10
+            
+          • 현재 차단된 IP 개수:
+            fail2ban-client status sshd | grep "Currently banned"
+          
+          🔒 ProxMox 보안 완성도:
+          1️⃣ SSH 키 인증 ✅
+          2️⃣ 패스워드 인증 비활성화 ✅  
+          3️⃣ APT 저장소 보안 ✅
+          4️⃣ Fail2ban 침입 차단 ✅
+          
+          ================================
