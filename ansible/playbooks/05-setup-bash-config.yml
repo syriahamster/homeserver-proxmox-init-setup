@@ -1,0 +1,276 @@
+---
+- name: "Bash 설정 및 커스터마이징"
+  hosts: proxmox
+  gather_facts: yes
+  vars:
+    # Bash 설정 옵션
+    bash_history_size: 10000    # 히스토리 최대 저장 개수
+    bash_history_filesize: 20000  # 히스토리 파일 최대 크기
+    enable_git_branch: true     # Git 브랜치 표시 활성화
+    enable_colored_prompt: true # 컬러 프롬프트 활성화
+    
+    # 사용자별 설정 적용 (root 및 추가 사용자들)
+    target_users:
+      - root
+    
+  tasks:
+    - name: "=== Bash 설정 및 커스터마이징 시작 ==="
+      debug:
+        msg: |
+          ================================
+          Bash 설정 및 커스터마이징
+          ================================
+          
+          🎯 목적: ProxMox 서버의 Bash 환경 개선
+          📋 설정 내용:
+          • History 명령어에 시간 표시 추가
+          • Git 브랜치명 프롬프트 표시
+          • 컬러 프롬프트 활성화
+          • 유용한 alias 및 환경 변수 설정
+          • History 크기 증가 및 중복 제거
+          
+          👥 적용 대상 사용자: {{ target_users | join(', ') }}
+          
+          ⏱️ 예상 소요시간: 1-2분
+          ================================
+
+    - name: "1단계: 현재 시스템 및 사용자 정보 확인"
+      debug:
+        msg: |
+          시스템 정보:
+          - OS: {{ ansible_distribution }} {{ ansible_distribution_version }}
+          - Bash 버전: {{ ansible_env.BASH_VERSION | default('확인 불가') }}
+          - 현재 사용자: {{ ansible_user_id }}
+          - 홈 디렉터리: {{ ansible_env.HOME }}
+
+    - name: "2단계: 기존 .bashrc 백업"
+      copy:
+        src: "{{ '/home/' + item + '/.bashrc' if item != 'root' else '/root/.bashrc' }}"
+        dest: "{{ '/home/' + item + '/.bashrc.backup.' + ansible_date_time.epoch if item != 'root' else '/root/.bashrc.backup.' + ansible_date_time.epoch }}"
+        remote_src: yes
+        backup: no
+      loop: "{{ target_users }}"
+      register: bashrc_backup
+      failed_when: false
+
+    - name: "백업 완료 확인"
+      debug:
+        msg: |
+          ✅ 기존 .bashrc 파일들이 백업되었습니다
+          백업 파일명에는 타임스탬프가 포함됩니다
+
+    - name: "3단계: 사용자별 .bashrc 설정 적용"
+      blockinfile:
+        path: "{{ '/home/' + item + '/.bashrc' if item != 'root' else '/root/.bashrc' }}"
+        marker: "# {mark} ANSIBLE MANAGED BASH CUSTOMIZATION"
+        block: |
+          # ================================
+          # ProxMox Bash 커스터마이징 설정
+          # ================================
+          
+          # History 설정 - 명령어 실행 시간 표시
+          export HISTTIMEFORMAT="%F %T "
+          export HISTSIZE={{ bash_history_size }}
+          export HISTFILESIZE={{ bash_history_filesize }}
+          export HISTCONTROL=ignoreboth:erasedups  # 중복 명령어 제거
+          
+          # History 즉시 저장 (여러 세션에서 공유)
+          shopt -s histappend
+          PROMPT_COMMAND="history -a; history -c; history -r; $PROMPT_COMMAND"
+          
+          # Git 브랜치 표시 함수
+          {% if enable_git_branch %}
+          parse_git_branch() {
+              git branch 2> /dev/null | sed -e '/^[^*]/d' -e 's/* \(.*\)/ (\1)/'
+          }
+          {% endif %}
+          
+          # 컬러 프롬프트 설정
+          {% if enable_colored_prompt %}
+          if [ "$color_prompt" = yes ]; then
+              # Root 사용자는 빨간색, 일반 사용자는 초록색
+              if [ "$EUID" -eq 0 ]; then
+                  {% if enable_git_branch %}
+                  PS1='\[\033[01;31m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[01;33m\]$(parse_git_branch)\[\033[00m\]\$ '
+                  {% else %}
+                  PS1='\[\033[01;31m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
+                  {% endif %}
+              else
+                  {% if enable_git_branch %}
+                  PS1='\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[01;33m\]$(parse_git_branch)\[\033[00m\]\$ '
+                  {% else %}
+                  PS1='\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
+                  {% endif %}
+              fi
+          else
+              {% if enable_git_branch %}
+              PS1='\u@\h:\w$(parse_git_branch)\$ '
+              {% else %}
+              PS1='\u@\h:\w\$ '
+              {% endif %}
+          fi
+          {% endif %}
+          
+          # ================================
+          # ProxMox Bash 커스터마이징 끝
+          # ================================
+          
+        create: yes
+        backup: yes
+      loop: "{{ target_users }}"
+      register: bashrc_update
+
+    - name: "Bash 설정 적용 결과"
+      debug:
+        msg: |
+          ✅ 모든 사용자의 .bashrc 파일이 업데이트되었습니다
+
+    - name: "4단계: .bash_profile 설정 (로그인 시 .bashrc 로드 보장)"
+      blockinfile:
+        path: "{{ '/home/' + item + '/.bash_profile' if item != 'root' else '/root/.bash_profile' }}"
+        marker: "# {mark} ANSIBLE MANAGED BASH PROFILE"
+        block: |
+          # .bashrc가 있으면 로드
+          if [ -f ~/.bashrc ]; then
+              . ~/.bashrc
+          fi
+        create: yes
+        backup: yes
+      loop: "{{ target_users }}"
+
+    - name: ".bash_profile 설정 결과"
+      debug:
+        msg: |
+          ✅ .bash_profile 설정이 완료되었습니다
+
+    - name: "5단계: 설정 적용 테스트"
+      shell: |
+        echo "=== Bash 설정 테스트 ==="
+        echo "현재 사용자: $(whoami)"
+        echo "Bash 버전: $BASH_VERSION"
+        echo "History 형식: $HISTTIMEFORMAT"
+        echo "History 크기: $HISTSIZE"
+        echo "History 파일 크기: $HISTFILESIZE"
+        
+        echo -e "\n=== Alias 테스트 ==="
+        alias | grep -E "(ll|la)" | head -2 || echo "기본 Alias만 설정됨"
+        
+        echo -e "\n=== Git 브랜치 함수 테스트 ==="
+        {% if enable_git_branch %}
+        if command -v git &> /dev/null; then
+            if git rev-parse --git-dir > /dev/null 2>&1; then
+                echo "Git 저장소에서 브랜치 표시: $(parse_git_branch)"
+            else
+                echo "Git 저장소가 아닌 경우: 브랜치 표시 안함"
+            fi
+        else
+            echo "Git이 설치되지 않음"
+        fi
+        {% else %}
+        echo "Git 브랜치 표시가 비활성화됨"
+        {% endif %}
+        
+        echo -e "\n=== 프롬프트 미리보기 ==="
+        echo "프롬프트: $PS1"
+      become_user: "{{ item }}"
+      loop: "{{ target_users }}"
+      register: bash_test
+      changed_when: false
+
+    - name: "Bash 설정 테스트 결과"
+      debug:
+        msg: |
+          사용자별 Bash 설정 테스트 결과:
+          {% for result in bash_test.results %}
+          
+          === {{ result.item }} 사용자 ===
+          {{ result.stdout }}
+          {% endfor %}
+
+    - name: "6단계: 새로운 히스토리 설정 확인"
+      shell: |
+        echo "=== History 설정 확인 ==="
+        echo "HISTTIMEFORMAT 설정: $HISTTIMEFORMAT"
+        echo "HISTSIZE 설정: $HISTSIZE"  
+        echo "HISTFILESIZE 설정: $HISTFILESIZE"
+        echo "History 파일 위치: ${HISTFILE:-~/.bash_history}"
+        
+        if [ -f "${HISTFILE:-~/.bash_history}" ]; then
+            echo "History 파일 크기: $(wc -l < ${HISTFILE:-~/.bash_history}) 줄"
+        else
+            echo "History 파일이 아직 생성되지 않음"
+        fi
+        
+        echo -e "\n=== 설정 적용 확인 ==="
+        echo "새로운 세션에서 history 명령어가 시간과 함께 표시됩니다"
+      args:
+        executable: /bin/bash
+      become_user: "{{ item }}"
+      loop: "{{ target_users }}"
+      register: history_check
+      changed_when: false
+
+    - name: "History 설정 확인 결과"
+      debug:
+        msg: |
+          사용자별 History 설정 결과:
+          {% for result in history_check.results %}
+          
+          === {{ result.item }} 사용자 ===
+          {{ result.stdout }}
+          {% endfor %}
+
+    - name: "🎉 Bash 설정 완료 및 사용 안내"
+      debug:
+        msg: |
+          ================================
+          🎉 Bash 설정 및 커스터마이징 완료!
+          ================================
+          
+          ✅ 적용된 설정들:
+          • History에 실행 시간 표시 (HISTTIMEFORMAT)
+          • History 크기 증가 ({{ bash_history_size }}개 명령어)
+          • 중복 명령어 자동 제거 (HISTCONTROL)
+          • Git 브랜치명 프롬프트 표시 (활성화됨)
+          • 컬러 프롬프트 (Root: 빨간색, 사용자: 초록색)
+          
+          📋 새로운 기능들:
+          
+          1. 🕐 시간이 포함된 History:
+             history                       # 시간과 함께 명령어 히스토리 표시
+             
+          2. 🌿 Git 브랜치 표시:
+             # Git 저장소에서 프롬프트에 브랜치명 자동 표시
+             root@proxmox:/path/to/repo (main)$
+          
+          💡 사용 예시:
+          
+          • 시간이 포함된 명령어 히스토리:
+            $ history
+            2024-09-08 14:30:15  ls -la
+            2024-09-08 14:30:22  docker ps
+            2024-09-08 14:30:35  git status
+            
+          • Git 브랜치가 표시되는 프롬프트:
+            root@proxmox:/opt/project (main)$ git checkout develop
+            root@proxmox:/opt/project (develop)$
+          
+          🔄 설정 적용 방법:
+          
+          1. 새 터미널 세션 시작:
+             exit                         # 현재 세션 종료 후 재접속
+             
+          2. 또는 설정 즉시 적용:
+             source ~/.bashrc             # 현재 세션에 즉시 적용
+             
+          📁 백업 파일:
+          • 기존 .bashrc는 타임스탬프와 함께 백업됨
+          • 복원이 필요하면 백업 파일 사용 가능
+          
+          ⚠️ 참고사항:
+          • Root 사용자 프롬프트는 빨간색으로 표시
+          • Git 저장소가 아닌 곳에서는 브랜치 표시 안함
+          • History는 여러 세션에서 실시간 공유됨
+          • 모든 설정은 사용자별로 개별 적용
+          
+          ================================

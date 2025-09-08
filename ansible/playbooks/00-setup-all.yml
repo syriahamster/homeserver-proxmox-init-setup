@@ -20,8 +20,11 @@
           1️⃣ SSH 키 기반 인증 설정
           2️⃣ 연결 테스트 및 확인  
           3️⃣ APT 저장소 설정
+          4️⃣ Git 및 개발 도구 설치
+          5️⃣ Docker & Docker Compose 설치
+          6️⃣ Bash 환경 설정 및 커스터마이징
           
-          ⏱️ 예상 소요시간: 5-10분
+          ⏱️ 예상 소요시간: 10-18분
           ⚠️ 중간에 중단하지 마세요!
           ================================
 
@@ -50,7 +53,13 @@
       include: 02-setup-proxmox-apt.yml
 
     - name: "4️⃣ Git 및 개발 도구 설치 실행"
-      include: 03-install-git.yml
+      include: 03-install-devtools.yml
+
+    - name: "5️⃣ Docker & Docker Compose 설치 실행"
+      include: 04-install-docker-compose.yml
+
+    - name: "6️⃣ Bash 환경 설정 및 커스터마이징 실행"
+      include: 05-setup-bash-config.yml
 
     - name: "🎉 모든 설정 완료!"
       debug:
