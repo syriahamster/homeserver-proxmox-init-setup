@@ -2,10 +2,6 @@
 - name: "Docker 및 Docker Compose 설치"
   hosts: proxmox
   gather_facts: yes
-  vars:
-    # Docker 설정
-    docker_users: []            # Docker 그룹에 추가할 사용자들 (예: ['user1', 'user2'])
-    docker_compose_version: "latest"  # 특정 버전 지정 가능 (예: "v2.24.5")
     
   tasks:
     - name: "=== Docker & Docker Compose 설치 시작 ==="
@@ -207,14 +203,14 @@
         name: "{{ item }}"
         groups: docker
         append: yes
-      loop: "{{ docker_users }}"
-      when: docker_users | length > 0
+      loop: "{{ docker_users | default([]) }}"
+      when: (docker_users | default([])) | length > 0
       register: user_docker_group
 
     - name: "사용자 그룹 추가 결과"
       debug:
         msg: |
-          {{ '✅ 사용자들을 Docker 그룹에 추가 완료: ' + (docker_users | join(', ')) if docker_users | length > 0 else '⏭️ 추가할 사용자 없음' }}
+          {{ '✅ 사용자들을 Docker 그룹에 추가 완료: ' + ((docker_users | default([])) | join(', ')) if (docker_users | default([])) | length > 0 else '⏭️ 추가할 사용자 없음' }}
 
     - name: "15단계: Docker Compose 테스트"
       shell: |
