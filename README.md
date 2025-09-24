@@ -43,46 +43,56 @@ ansible_port: 22                      # ← SSH 포트가 다르면 변경
 
 SSH 키가 다른 경로에 있다면 플레이북의 SSH 키 배포 부분을 수정해야 합니다.
 
-## 사용법
+## 사용 방법
 
-### 🚀 빠른 시작 (권장 - 모든 것을 한 번에)
+### Ansible을 이용한 ProxMox 서버 설정
 
+#### 1. SSH 키 생성 (필요한 경우)
 ```bash
-cd ansible
-ansible-playbook playbooks/00-setup-all.yml
+ssh-keygen -t rsa -b 4096 -C "your-email@example.com"
 ```
 
-**이 명령어 하나로 모든 설정이 자동으로 완료됩니다!**
-- SSH 키 설정 → 연결 테스트 → APT 저장소 설정 → Git 및 개발 도구 설치 → Docker & Docker Compose 설치 → Bash 환경 커스터마이징 → Fail2ban 보안 설정
-
-### ⚠️ 수동 설정 (단계별 실행)
-
-필요에 따라 각 단계를 개별적으로 실행할 수 있습니다:
-
-```bash
-cd ansible
-
-# 1️⃣ SSH 키 기반 인증 설정 (필수 - 가장 먼저)
-ansible-playbook playbooks/01-setup-ssh-keys.yml
-
-# 2️⃣ 연결 테스트 (SSH 키 설정 확인)
-ansible proxmox-server -m ping
-
-# 3️⃣ APT 저장소 설정 (권장 - 연결 확인 후)
-ansible-playbook playbooks/02-setup-proxmox-apt.yml
-
-# 4️⃣ Git 및 개발 도구 설치
-ansible-playbook playbooks/03-install-devtools.yml
-
-# 5️⃣ Docker & Docker Compose 설치
-ansible-playbook playbooks/04-install-docker-compose.yml
-
-# 6️⃣ Bash 환경 설정 및 커스터마이징
-ansible-playbook playbooks/05-setup-bash-config.yml
-
-# 7️⃣ Fail2ban 보안 설정
-ansible-playbook playbooks/06-setup-fail2ban.yml
+#### 2. 인벤토리 파일 설정
+`inventory/hosts.yml` 파일에서 ProxMox 서버 정보를 수정하세요:
+```yaml
+proxmox_servers:
+  hosts:
+    proxmox-01:
+      ansible_host: YOUR_PROXMOX_IP
+      ansible_user: root
+      ansible_ssh_private_key_file: ~/.ssh/id_rsa
+      proxmox_node_name: YOUR_NODE_NAME
 ```
+
+#### 3. 전체 설정 실행
+```bash
+ansible-playbook -i inventory/hosts.yml playbooks/00-setup-all.yml
+```
+
+또는 개별 플레이북 실행:
+```bash
+# SSH 키 설정
+ansible-playbook -i inventory/hosts.yml playbooks/01-setup-ssh-keys.yml
+
+# APT 저장소 설정  
+ansible-playbook -i inventory/hosts.yml playbooks/02-setup-proxmox-apt.yml
+
+# 개발 도구 설치
+ansible-playbook -i inventory/hosts.yml playbooks/03-install-devtools.yml
+
+# Docker Compose 설치
+ansible-playbook -i inventory/hosts.yml playbooks/04-install-docker-compose.yml
+
+# Bash 설정
+ansible-playbook -i inventory/hosts.yml playbooks/05-setup-bash-config.yml
+
+# Fail2ban 설정
+ansible-playbook -i inventory/hosts.yml playbooks/06-setup-fail2ban.yml
+```
+
+### 도커용 VM 생성 및 설정
+
+Docker Compose를 실행할 VM은 수동으로 생성하면, 설정은 자동으로 할 수 있습니다.
 
 ---
 
@@ -258,6 +268,23 @@ fatal: [proxmox-server]: UNREACHABLE! => changed=false
 ### 키 인증 실패
 - SSH 키가 올바르게 생성되었는지 확인
 - authorized_keys 파일 권한 확인 (600)
+
+## 프로젝트 구조
+
+```
+homeserver-iac/
+├── README.md
+├── inventory/
+│   └── hosts.yml                    # 서버 인벤토리
+└── playbooks/                       # Ansible 플레이북들
+    ├── 00-setup-all.yml            # 전체 설정 실행
+    ├── 01-setup-ssh-keys.yml       # SSH 키 설정
+    ├── 02-setup-proxmox-apt.yml    # APT 저장소 설정
+    ├── 03-install-devtools.yml     # 개발 도구 설치
+    ├── 04-install-docker-compose.yml # Docker Compose 설치
+    ├── 05-setup-bash-config.yml    # Bash 환경 설정
+    └── 06-setup-fail2ban.yml       # Fail2ban 보안 설정
+```
 
 ## 다음 단계
 SSH 키 설정이 완료되면 추가 보안 설정을 진행할 수 있습니다:
