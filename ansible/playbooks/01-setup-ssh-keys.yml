@@ -75,6 +75,40 @@
       register: ssh_key_rsa
       failed_when: false
 
+    - name: "로컬 authorized_keys 파일 존재 확인"
+      stat:
+        path: "~/.ssh/authorized_keys"
+      delegate_to: localhost
+      register: local_authorized_keys
+
+    - name: "기존 authorized_keys 내용 복사"
+      block:
+        - name: "로컬 authorized_keys 내용 읽기"
+          slurp:
+            src: "~/.ssh/authorized_keys"
+          delegate_to: localhost
+          register: authorized_keys_content
+
+        - name: "기존 authorized_keys 내용을 대상 서버에 추가"
+          blockinfile:
+            path: "/home/{{ ansible_user }}/.ssh/authorized_keys"
+            block: "{{ authorized_keys_content.content | b64decode }}"
+            marker: "# {mark} ANSIBLE MANAGED - 기존 authorized_keys 복사본"
+            create: yes
+            mode: '0600'
+            owner: "{{ ansible_user }}"
+            group: "{{ ansible_user }}"
+          register: authorized_keys_copy
+
+        - name: "authorized_keys 복사 결과"
+          debug:
+            msg: |
+              📋 기존 authorized_keys 복사 완료:
+              - 로컬 파일: ~/.ssh/authorized_keys
+              - 대상 경로: /home/{{ ansible_user }}/.ssh/authorized_keys
+              - 상태: {{ 'SUCCESS' if authorized_keys_copy.changed else 'ALREADY_EXISTS' }}
+      when: local_authorized_keys.stat.exists
+
     - name: "SSH 키 배포 상태 확인"
       debug:
         msg: |
@@ -82,6 +116,7 @@
           {{ '✅ 이미 SSH 키 인증이 작동하므로 배포 건너뜀' if pre_ssh_key_test.rc == 0 else '📋 배포 시도 결과:' }}
           {{ '- ed25519 키: ' + ('SUCCESS' if ssh_key_ed25519.changed | default(false) else 'SKIPPED/FAILED') if pre_ssh_key_test.rc != 0 else '' }}
           {{ '- RSA 키: ' + ('SUCCESS' if ssh_key_rsa.changed | default(false) else 'SKIPPED/FAILED') if pre_ssh_key_test.rc != 0 else '' }}
+          - 기존 authorized_keys: {{ 'COPIED' if authorized_keys_copy.changed | default(false) else ('NOT_FOUND' if not local_authorized_keys.stat.exists | default(false) else 'ALREADY_EXISTS') }}
 
     - name: "=== 4단계: SSH 키 배포 후 중간 테스트 ==="
       debug:
@@ -121,6 +156,26 @@
         line: 'PasswordAuthentication no'
         backup: yes
       notify: restart_ssh_and_verify
+
+    - name: "Cloud-init SSH 설정 파일 확인"
+      stat:
+        path: /etc/ssh/sshd_config.d/50-cloud-init.conf
+      register: cloud_init_ssh_config
+
+    - name: "Cloud-init SSH 설정에서 PasswordAuthentication 비활성화"
+      lineinfile:
+        path: /etc/ssh/sshd_config.d/50-cloud-init.conf
+        regexp: '^#?PasswordAuthentication'
+        line: 'PasswordAuthentication no'
+        backup: yes
+      when: cloud_init_ssh_config.stat.exists
+      register: cloud_init_config_changed
+
+    - name: "SSH 서비스 재시작 (cloud-init 설정 변경시)"
+      service:
+        name: ssh
+        state: restarted
+      when: cloud_init_config_changed.changed | default(false)
 
     - name: "SSH 설정 강화 - MaxAuthTries 설정"
       lineinfile:

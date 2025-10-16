@@ -204,6 +204,72 @@ ansible-playbook playbooks/01-setup-ssh-keys.yml --tags ssh_config
 ansible-playbook playbooks/02-setup-proxmox-apt.yml
 ```
 
+### 특정 단계부터 다시 시작하기
+
+플레이북 실행 중 오류가 발생하거나 특정 작업부터 다시 실행하고 싶은 경우:
+
+#### `--start-at-task` 옵션 사용
+
+```bash
+# 전체 설정에서 특정 단계부터 시작
+ansible-playbook -i ansible/inventory/hosts.yml ansible/playbooks/00-setup-all.yml \
+  --start-at-task="3단계: 개발 도구 설치"
+
+# Docker 설치에서 특정 단계부터 시작
+ansible-playbook -i ansible/inventory/hosts.yml ansible/playbooks/06-install-docker-compose.yml \
+  --start-at-task="14단계: Docker 그룹에 사용자 추가 (선택사항)"
+
+# SSH 키 설정에서 특정 단계부터 시작
+ansible-playbook -i ansible/inventory/hosts.yml ansible/playbooks/01-setup-ssh-keys.yml \
+  --start-at-task="4단계: SSH 보안 설정 적용"
+
+# Bash 설정에서 특정 단계부터 시작
+ansible-playbook -i ansible/inventory/hosts.yml ansible/playbooks/04-setup-bash-config.yml \
+  --start-at-task="5단계: 사용자별 Bash 설정 적용"
+```
+
+#### 일반적인 재시작 시나리오
+
+```bash
+# Docker 설치 실패 후 그룹 추가부터 다시 시작
+ansible-playbook -i ansible/inventory/hosts.yml ansible/playbooks/06-install-docker-compose.yml \
+  --start-at-task="14단계: Docker 그룹에 사용자 추가 (선택사항)"
+
+# APT 저장소 설정 실패 후 저장소 추가부터 다시 시작
+ansible-playbook -i ansible/inventory/hosts.yml ansible/playbooks/02-setup-proxmox-apt.yml \
+  --start-at-task="3단계: No-Subscription 저장소 추가"
+
+# SSH 키 설정에서 보안 설정부터 다시 시작
+ansible-playbook -i ansible/inventory/hosts.yml ansible/playbooks/01-setup-ssh-keys.yml \
+  --start-at-task="4단계: SSH 보안 설정 적용"
+```
+
+#### 태스크 이름 확인 방법
+
+플레이북의 태스크 이름을 확인하려면:
+
+```bash
+# 플레이북의 모든 태스크 목록 확인
+ansible-playbook -i ansible/inventory/hosts.yml ansible/playbooks/06-install-docker-compose.yml --list-tasks
+
+# 특정 플레이북의 태스크 이름들 확인
+grep -n "name:" ansible/playbooks/06-install-docker-compose.yml
+```
+
+#### Dry-run으로 확인
+
+실제 실행 전에 어떤 작업이 수행될지 확인:
+
+```bash
+# 변경사항만 확인 (실제로 실행하지 않음)
+ansible-playbook -i ansible/inventory/hosts.yml ansible/playbooks/06-install-docker-compose.yml \
+  --start-at-task="14단계: Docker 그룹에 사용자 추가 (선택사항)" --check
+
+# 상세한 출력으로 확인
+ansible-playbook -i ansible/inventory/hosts.yml ansible/playbooks/06-install-docker-compose.yml \
+  --start-at-task="14단계: Docker 그룹에 사용자 추가 (선택사항)" --check -v
+```
+
 ### 플레이북 자동 감지 기능
 
 플레이북들은 현재 연결 방식을 자동으로 감지하여:
