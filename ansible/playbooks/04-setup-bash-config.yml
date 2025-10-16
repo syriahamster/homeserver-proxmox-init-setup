@@ -9,9 +9,8 @@
     enable_git_branch: true     # Git 브랜치 표시 활성화
     enable_colored_prompt: true # 컬러 프롬프트 활성화
     
-    # 사용자별 설정 적용 (root 및 추가 사용자들)
-    target_users:
-      - root
+    # 사용자별 설정 적용 (ansible_user와 root, 중복 제거)
+    target_users: "{{ ['root', ansible_user] | unique }}"
     
   tasks:
     - name: "=== Bash 설정 및 커스터마이징 시작 ==="

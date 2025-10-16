@@ -17,6 +17,7 @@
       - tree
       - unzip
       - build-essential
+      - net-tools
     
     # 선택적 패키지
     optional_packages:

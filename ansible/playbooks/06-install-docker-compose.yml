@@ -140,17 +140,25 @@
         msg: |
           ✅ Docker 서비스 활성화 및 시작 완료
 
+    - name: "Docker Compose 버전 설정"
+      set_fact:
+        compose_version_target: "{{ docker_compose_version | default('latest') }}"
+
     - name: "10단계: Docker Compose 최신 버전 확인"
       uri:
         url: https://api.github.com/repos/docker/compose/releases/latest
         method: GET
         return_content: yes
       register: compose_latest_release
-      when: docker_compose_version == "latest"
+      when: compose_version_target == "latest"
+
+    - name: "Docker Compose 다운로드 버전 결정"
+      set_fact:
+        compose_download_version: "{{ compose_latest_release.json.tag_name if compose_version_target == 'latest' else compose_version_target }}"
 
     - name: "11단계: Docker Compose 다운로드 및 설치"
       get_url:
-        url: "https://github.com/docker/compose/releases/download/{{ docker_compose_version if docker_compose_version != 'latest' else compose_latest_release.json.tag_name }}/docker-compose-linux-{{ ansible_architecture }}"
+        url: "https://github.com/docker/compose/releases/download/{{ compose_download_version }}/docker-compose-linux-{{ ansible_architecture }}"
         dest: /usr/local/bin/docker-compose
         mode: '0755'
         owner: root
