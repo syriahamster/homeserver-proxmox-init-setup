@@ -76,3 +76,5 @@ id_*
 *~
 
 plan.md
+
+ansible/playbooks/private/*
